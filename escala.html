@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Detalhes da Escala - Oração Ininterrupta</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Biblioteca para exportação em PDF -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+</head>
+<body class="bg-slate-50 min-h-screen font-sans text-slate-800 pb-12">
+
+<!-- Header -->
+<header class="bg-white border-b border-slate-200 print:hidden shadow-sm">
+    <div class="max-w-4xl mx-auto px-4 py-4 flex items-center justify-between">
+        <div class="flex items-center space-x-3">
+            <a href="index.html" class="text-indigo-950 hover:text-indigo-700 text-2xl transition">
+                <i class="fa-solid fa-house"></i>
+            </a>
+            <span class="font-semibold text-lg text-indigo-950">Oração Ininterrupta</span>
+        </div>
+    </div>
+</header>
+
+<main class="max-w-4xl mx-auto px-4 py-8">
+
+    <!-- Card de Resumo e Estatísticas -->
+    <div id="detalhe-card" class="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm mb-6 print:shadow-none">
+        <!-- Renderizado via JS -->
+    </div>
+
+    <!-- Painel de Ações Rápidas -->
+    <div id="painel-acoes" class="flex justify-center items-center gap-8 mb-8 print:hidden">
+        <div class="text-center group cursor-pointer" onclick="copiarLink()">
+            <button class="w-12 h-12 rounded-full bg-[#0b132b] text-white flex items-center justify-center shadow-md hover:bg-indigo-900 transition mx-auto mb-1">
+                <i class="fa-solid fa-clone text-sm"></i>
+            </button>
+            <span class="text-xs font-medium text-slate-600">Copiar link</span>
+        </div>
+        <div class="text-center group cursor-pointer" id="btn-pdf-container" onclick="baixarPDF()">
+            <button class="w-12 h-12 rounded-full bg-[#0b132b] text-white flex items-center justify-center shadow-md hover:bg-indigo-900 transition mx-auto mb-1">
+                <i class="fa-solid fa-file-pdf text-sm"></i>
+            </button>
+            <span class="text-xs font-medium text-slate-600">Baixar PDF</span>
+        </div>
+        <div class="text-center group cursor-pointer" id="btn-excluir-container" onclick="excluirEscala()">
+            <button class="w-12 h-12 rounded-full border border-red-200 text-red-600 bg-red-50/50 flex items-center justify-center shadow-sm hover:bg-red-100 transition mx-auto mb-1">
+                <i class="fa-solid fa-trash-can text-sm"></i>
+            </button>
+            <span class="text-xs font-medium text-red-600">Excluir escala</span>
+        </div>
+    </div>
+
+    <!-- Tabela de Horários -->
+    <div id="area-pdf" class="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
+        <div class="hidden print:block p-6 border-b border-slate-200 text-center bg-slate-50">
+            <h2 id="pdf-titulo-topo" class="font-bold text-lg text-indigo-950"></h2>
+            <p id="pdf-subtitulo-topo" class="text-sm text-slate-600 mt-1"></p>
+        </div>
+        <table class="w-full border-collapse text-left text-sm">
+            <thead>
+            <tr class="bg-[#0b132b] text-white">
+                <th class="p-3.5 w-1/3 border-r border-indigo-900 font-semibold">Horário</th>
+                <th class="p-3.5 w-2/3 font-semibold">Nome</th>
+            </tr>
+            </thead>
+            <tbody id="tabela-horarios" class="divide-y divide-slate-100">
+            <!-- Renderizado dinamicamente via JS -->
+            </tbody>
+        </table>
+    </div>
+</main>
+
+<script src="app.js"></script>
+</body>
+</html>
