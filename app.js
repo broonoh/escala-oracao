@@ -4,7 +4,7 @@ if (!localStorage.getItem('user_uuid')) {
 }
 const currentUserId = localStorage.getItem('user_uuid');
 
-// --- FUNÇÕES DE PERSISTÊNCIA (LOCALSTORAGE + NPOINT.IO PARA NUVEM) ---
+// --- FUNÇÕES DE PERSISTÊNCIA ---
 function getEscalas() {
     try {
         const dados = localStorage.getItem('escalas_oracao');
@@ -20,64 +20,55 @@ function saveEscalas(escalas) {
     localStorage.setItem('escalas_oracao', JSON.stringify(escalas));
 }
 
-// Sincronização automática via nuvem pública (npoint.io) para links curtos
-async function carregarEscalaDaNuvem(idEscala) {
-    if (!idEscala || idEscala.length < 10) return; // Se for um ID local antigo, ignora
+// PROCESSA A URL COMPACTADA
+function processarEscalaViaUrl() {
+    const hash = window.location.hash.substring(1);
+    if (!hash) return null;
 
     try {
-        const response = await fetch(`https://api.npoint.io/${idEscala}`);
-        if (response.ok) {
-            const escalaRemota = await response.json();
-            let escalas = getEscalas();
-            const index = escalas.findIndex(e => e.id === escalaRemota.id);
-            if (index >= 0) {
-                escalas[index] = escalaRemota;
-            } else {
-                escalas.push(escalaRemota);
-            }
-            saveEscalas(escalas);
-        }
-    } catch (e) {
-        console.error("Erro ao sincronizar com a nuvem:", e);
-    }
-}
-
-async function processarEscalaViaUrl() {
-    const params = new URLSearchParams(window.location.search);
-    const idUrl = params.get('id');
-
-    // Compatibilidade com o sistema antigo de hash caso ainda exista
-    const hash = window.location.hash.substring(1);
-    let idFinal = idUrl || (hash && !hash.startsWith('data=') ? hash : null);
-
-    if (hash && hash.startsWith('data=')) {
-        try {
-            const jsonString = decodeURIComponent(hash.replace('data=', ''));
+        if (hash.startsWith('data=')) {
+            const compressed = hash.replace('data=', '');
+            // Descompacta usando LZString
+            const jsonString = LZString.decompressFromEncodedURIComponent(compressed);
             const escalaRecebida = JSON.parse(jsonString);
+
             if (escalaRecebida && escalaRecebida.id) {
                 let escalas = getEscalas();
                 const index = escalas.findIndex(e => e.id === escalaRecebida.id);
-                if (index >= 0) escalas[index] = escalaRecebida;
-                else escalas.push(escalaRecebida);
+                if (index >= 0) {
+                    escalas[index] = escalaRecebida;
+                } else {
+                    escalas.push(escalaRecebida);
+                }
                 saveEscalas(escalas);
                 localStorage.setItem('escala_atual_id', escalaRecebida.id);
                 return escalaRecebida.id;
             }
-        } catch (err) {}
+        }
+    } catch (e) {
+        console.error("Erro ao processar dados compactados da URL", e);
     }
 
-    if (idFinal) {
-        localStorage.setItem('escala_atual_id', idFinal);
-        await carregarEscalaDaNuvem(idFinal);
-        return idFinal;
+    if (hash) {
+        localStorage.setItem('escala_atual_id', hash);
+        return hash;
     }
 
-    return localStorage.getItem('escala_atual_id');
+    return null;
 }
 
 function getEscalaAtualId() {
+    const idPorUrl = processarEscalaViaUrl();
+    if (idPorUrl) return idPorUrl;
+
     const params = new URLSearchParams(window.location.search);
-    return params.get('id') || localStorage.getItem('escala_atual_id');
+    const idUrl = params.get('id');
+    if (idUrl) {
+        localStorage.setItem('escala_atual_id', idUrl);
+        return idUrl;
+    }
+
+    return localStorage.getItem('escala_atual_id');
 }
 
 function setEscalaAtualId(id) {
@@ -118,7 +109,7 @@ if (window.location.pathname.includes('index.html') || window.location.pathname.
     });
 }
 
-async function criarEscala(event) {
+function criarEscala(event) {
     event.preventDefault();
     const igreja = document.getElementById('igreja').value.trim();
     const motivo = document.getElementById('motivo').value.trim();
@@ -126,9 +117,11 @@ async function criarEscala(event) {
     const dataFim = document.getElementById('data-fim').value;
     const intervalo = parseInt(document.getElementById('intervalo-tempo').value) || 15;
 
+    const escalaId = 'esc_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4);
     const novasEscalas = getEscalas();
+
     const novaEscala = {
-        id: 'temp_' + Date.now(),
+        id: escalaId,
         criadorId: currentUserId,
         igreja: igreja,
         motivo: motivo,
@@ -139,31 +132,12 @@ async function criarEscala(event) {
         horarios: gerarHorarios(intervalo)
     };
 
-    // Salva na nuvem para gerar um ID curto na npoint.io
-    try {
-        const response = await fetch('https://api.npoint.io', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(novaEscala)
-        });
-        if (response.ok) {
-            const resultado = await response.json();
-            // O npoint retorna o bin id (ex: id: "abc123xyz")
-            if (resultado && resultado.id) {
-                novaEscala.id = resultado.id;
-            }
-        }
-    } catch (e) {
-        console.warn("Aviso: Não foi possível salvar na nuvem instantaneamente, usando ID local.", e);
-        novaEscala.id = 'esc_' + Date.now();
-    }
-
     novasEscalas.push(novaEscala);
     saveEscalas(novasEscalas);
-    setEscalaAtualId(novaEscala.id);
+    setEscalaAtualId(escalaId);
 
     setTimeout(() => {
-        window.location.href = `escala.html?id=${novaEscala.id}`;
+        window.location.href = 'escala.html';
     }, 100);
 }
 
@@ -186,7 +160,7 @@ function renderizarListaEscalas() {
             const porcentagem = total > 0 ? ((ocupados / total) * 100).toFixed(1) : '0.0';
 
             return `
-                <div onclick="setEscalaAtualId('${e.id}'); window.location.href='escala.html?id=${e.id}'" class="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm hover:shadow-md transition cursor-pointer flex flex-col justify-between group">
+                <div onclick="setEscalaAtualId('${e.id}'); window.location.href='escala.html'" class="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm hover:shadow-md transition cursor-pointer flex flex-col justify-between group">
                     <div>
                         <span class="text-[10px] font-bold text-indigo-900 tracking-wider uppercase bg-indigo-50 px-2 py-0.5 rounded">Igreja</span>
                         <h3 class="font-bold text-indigo-950 text-base mt-2 mb-1 group-hover:text-indigo-700 transition">${e.igreja}</h3>
@@ -206,10 +180,7 @@ function renderizarListaEscalas() {
 
 // --- CONTROLE DA PÁGINA DE DETALHES (escala.html) ---
 if (window.location.pathname.includes('escala.html')) {
-    window.addEventListener('DOMContentLoaded', async () => {
-        await processarEscalaViaUrl();
-        carregarDetalhesEscala();
-    });
+    window.addEventListener('DOMContentLoaded', carregarDetalhesEscala);
 }
 
 function carregarDetalhesEscala() {
@@ -248,13 +219,6 @@ function carregarDetalhesEscala() {
         `;
     }
 
-    if (escala.criadorId !== currentUserId) {
-        const btnExcluir = document.getElementById('btn-excluir-container');
-        const btnPdf = document.getElementById('btn-pdf-container');
-        if (btnExcluir) btnExcluir.style.display = 'none';
-        if (btnPdf) btnPdf.style.display = 'none';
-    }
-
     const pdfTitulo = document.getElementById('pdf-titulo-topo');
     const pdfSub = document.getElementById('pdf-subtitulo-topo');
     if (pdfTitulo) pdfTitulo.innerText = `Escala da Oração Ininterrupta - ${escala.igreja}`;
@@ -284,7 +248,7 @@ function carregarDetalhesEscala() {
     }
 }
 
-async function preencherHorario(horarioId) {
+function preencherHorario(horarioId) {
     const nome = prompt("Digite seu nome completo para confirmar o horário de oração:");
     if (!nome || nome.trim() === "") return;
 
@@ -304,20 +268,6 @@ async function preencherHorario(horarioId) {
         escala.ultimoRegistro = `${dataStr} ${horaStr}`;
 
         saveEscalas(escalas);
-
-        // Atualiza também na nuvem para que outras pessoas vejam a alteração
-        if (id && id.length > 8 && !id.startsWith('esc_') && !id.startsWith('temp_')) {
-            try {
-                await fetch(`https://api.npoint.io/${id}`, {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(escala)
-                });
-            } catch (e) {
-                console.warn("Erro ao atualizar na nuvem:", e);
-            }
-        }
-
         carregarDetalhesEscala();
     }
 }
@@ -331,20 +281,27 @@ function excluirEscala() {
     window.location.href = "index.html";
 }
 
-// --- FUNÇÃO DE COMPARTILHAR LINK CURTO ---
+// --- FUNÇÃO DE COMPARTILHAR COM COMPRESSÃO INTELIGENTE ---
 function copiarLink() {
     const id = getEscalaAtualId();
-    if (!id) {
+    const escalas = getEscalas();
+    const escala = escalas.find(e => e.id === id);
+
+    if (!escala) {
         alert("Nenhuma escala selecionada para compartilhar.");
         return;
     }
 
+    // Compacta o JSON inteiro usando LZString para diminuir drasticamente o tamanho do link
+    const jsonString = JSON.stringify(escala);
+    const compressed = LZString.compressToEncodedURIComponent(jsonString);
+
     const urlBase = window.location.href.split('#')[0].split('?')[0];
-    const linkCompleto = `${urlBase}?id=${id}`;
+    const linkCompleto = `${urlBase}#data=${compressed}`;
 
     if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(linkCompleto).then(() => {
-            alert("Link curto copiado com sucesso! Envie para os irmãos.");
+            alert("Link da escala compactado e copiado com sucesso!");
         }).catch(() => {
             copiarLinkAlternativo(linkCompleto);
         });
@@ -363,7 +320,7 @@ function copiarLinkAlternativo(texto) {
     textarea.select();
     try {
         document.execCommand('copy');
-        alert("Link curto copiado com sucesso! Envie para os irmãos.");
+        alert("Link da escala compactado e copiado com sucesso!");
     } catch (err) {
         alert("Erro ao tentar copiar o link.");
     }
