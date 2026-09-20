@@ -146,12 +146,11 @@ if (window.location.pathname.includes('escala.html')) {
 }
 
 function carregarDetalhesEscala() {
-    const id = getEscalaAtualId();
-    // Limpa a URL visualmente sem perder o ID e sem recarregar a página
-    if (window.location.search.includes('id=')) {
-        const novaUrl = window.location.pathname;
-        window.history.replaceState({}, document.title, novaUrl);
+    // Se ainda houver ?id= na URL por causa de algum link antigo, limpa na hora
+    if (window.location.search) {
+        window.history.replaceState({}, document.title, window.location.pathname);
     }
+    const id = getEscalaAtualId();
     const escalas = getEscalas();
 
     if (!id) {
