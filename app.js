@@ -290,6 +290,7 @@ function excluirEscala() {
 }
 
 // --- FUNÇÃO DE COMPARTILHAR LINK INTeligente ---
+// --- FUNÇÃO DE COMPARTILHAR LINK COMPATÍVEL COM TODOS OS NAVEGADORES ---
 function copiarLink() {
     const id = getEscalaAtualId();
     const escalas = getEscalas();
@@ -305,11 +306,48 @@ function copiarLink() {
     const urlBase = window.location.href.split('#')[0].split('?')[0];
     const linkCompleto = `${urlBase}#data=${dadosJson}`;
 
-    navigator.clipboard.writeText(linkCompleto).then(() => {
-        alert("Link da escala copiado com sucesso! Envie para os irmãos.");
-    }).catch(err => {
-        console.error("Erro ao copiar link: ", err);
-    });
+    // Tenta usar a API moderna do Clipboard primeiro
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(linkCompleto).then(() => {
+            alert("Link da escala copiado com sucesso! Envie para os irmãos.");
+        }).catch(err => {
+            console.warn("Falha no clipboard moderno, usando método alternativo...", err);
+            copiarLinkAlternativo(linkCompleto);
+        });
+    } else {
+        // Fallback para navegadores antigos ou restritos
+        copiarLinkAlternativo(linkCompleto);
+    }
+}
+
+// Método alternativo infalível usando um input temporário
+function copiarLinkAlternativo(texto) {
+    const textarea = document.createElement("textarea");
+    textarea.value = texto;
+
+    // Torna o textarea invisível e o adiciona ao corpo da página
+    textarea.style.position = "fixed";
+    textarea.style.top = "0";
+    textarea.style.left = "0";
+    textarea.style.opacity = "0";
+    document.body.appendChild(textarea);
+
+    textarea.focus();
+    textarea.select();
+
+    try {
+        const sucesso = document.execCommand('copy');
+        if (sucesso) {
+            alert("Link da escala copiado com sucesso! Envie para os irmãos.");
+        } else {
+            alert("Não foi possível copiar automaticamente. Copie manualmente da barra de endereços.");
+        }
+    } catch (err) {
+        console.error("Erro ao copiar link alternativo: ", err);
+        alert("Erro ao tentar copiar o link.");
+    }
+
+    document.body.removeChild(textarea);
 }
 
 function mostrarFormulario() {
