@@ -4,7 +4,7 @@ if (!localStorage.getItem('user_uuid')) {
 }
 const currentUserId = localStorage.getItem('user_uuid');
 
-// --- FUNÇÕES DE PERSISTÊNCIA (LOCALSTORAGE + HASH) ---
+// --- FUNÇÕES DE PERSISTÊNCIA (LOCALSTORAGE + NPOINT.IO PARA NUVEM) ---
 function getEscalas() {
     try {
         const dados = localStorage.getItem('escalas_oracao');
@@ -20,56 +20,64 @@ function saveEscalas(escalas) {
     localStorage.setItem('escalas_oracao', JSON.stringify(escalas));
 }
 
-// SINCRONIZAÇÃO COMPLETA POR HASH: Se o link vier com os dados da escala embutidos, salva no aparelho da visita
-function processarEscalaViaUrl() {
-    const hash = window.location.hash.substring(1);
-    if (!hash) return null;
+// Sincronização automática via nuvem pública (npoint.io) para links curtos
+async function carregarEscalaDaNuvem(idEscala) {
+    if (!idEscala || idEscala.length < 10) return; // Se for um ID local antigo, ignora
 
     try {
-        // Se o hash for um JSON compactado/codificado da escala
-        if (hash.startsWith('data=')) {
+        const response = await fetch(`https://api.npoint.io/${idEscala}`);
+        if (response.ok) {
+            const escalaRemota = await response.json();
+            let escalas = getEscalas();
+            const index = escalas.findIndex(e => e.id === escalaRemota.id);
+            if (index >= 0) {
+                escalas[index] = escalaRemota;
+            } else {
+                escalas.push(escalaRemota);
+            }
+            saveEscalas(escalas);
+        }
+    } catch (e) {
+        console.error("Erro ao sincronizar com a nuvem:", e);
+    }
+}
+
+async function processarEscalaViaUrl() {
+    const params = new URLSearchParams(window.location.search);
+    const idUrl = params.get('id');
+
+    // Compatibilidade com o sistema antigo de hash caso ainda exista
+    const hash = window.location.hash.substring(1);
+    let idFinal = idUrl || (hash && !hash.startsWith('data=') ? hash : null);
+
+    if (hash && hash.startsWith('data=')) {
+        try {
             const jsonString = decodeURIComponent(hash.replace('data=', ''));
             const escalaRecebida = JSON.parse(jsonString);
-
             if (escalaRecebida && escalaRecebida.id) {
                 let escalas = getEscalas();
-                // Verifica se já existe, se não, adiciona
                 const index = escalas.findIndex(e => e.id === escalaRecebida.id);
-                if (index >= 0) {
-                    escalas[index] = escalaRecebida; // Atualiza se houver mudanças
-                } else {
-                    escalas.push(escalaRecebida); // Insere no navegador do visitante
-                }
+                if (index >= 0) escalas[index] = escalaRecebida;
+                else escalas.push(escalaRecebida);
                 saveEscalas(escalas);
                 localStorage.setItem('escala_atual_id', escalaRecebida.id);
                 return escalaRecebida.id;
             }
-        }
-    } catch (e) {
-        console.error("Erro ao processar dados da URL", e);
+        } catch (err) {}
     }
 
-    // Fallback caso seja apenas um ID simples
-    if (hash) {
-        localStorage.setItem('escala_atual_id', hash);
-        return hash;
-    }
-
-    return null;
-}
-
-function getEscalaAtualId() {
-    const idPorUrl = processarEscalaViaUrl();
-    if (idPorUrl) return idPorUrl;
-
-    const params = new URLSearchParams(window.location.search);
-    const idUrl = params.get('id');
-    if (idUrl) {
-        localStorage.setItem('escala_atual_id', idUrl);
-        return idUrl;
+    if (idFinal) {
+        localStorage.setItem('escala_atual_id', idFinal);
+        await carregarEscalaDaNuvem(idFinal);
+        return idFinal;
     }
 
     return localStorage.getItem('escala_atual_id');
+}
+
+function getEscalaAtualId() {
+    const params = new URLSearchParams(window.location.search);
+    return params.get('id') || localStorage.getItem('escala_atual_id');
 }
 
 function setEscalaAtualId(id) {
@@ -110,7 +118,7 @@ if (window.location.pathname.includes('index.html') || window.location.pathname.
     });
 }
 
-function criarEscala(event) {
+async function criarEscala(event) {
     event.preventDefault();
     const igreja = document.getElementById('igreja').value.trim();
     const motivo = document.getElementById('motivo').value.trim();
@@ -118,11 +126,9 @@ function criarEscala(event) {
     const dataFim = document.getElementById('data-fim').value;
     const intervalo = parseInt(document.getElementById('intervalo-tempo').value) || 15;
 
-    const escalaId = 'esc_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4);
     const novasEscalas = getEscalas();
-
     const novaEscala = {
-        id: escalaId,
+        id: 'temp_' + Date.now(),
         criadorId: currentUserId,
         igreja: igreja,
         motivo: motivo,
@@ -133,12 +139,31 @@ function criarEscala(event) {
         horarios: gerarHorarios(intervalo)
     };
 
+    // Salva na nuvem para gerar um ID curto na npoint.io
+    try {
+        const response = await fetch('https://api.npoint.io', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(novaEscala)
+        });
+        if (response.ok) {
+            const resultado = await response.json();
+            // O npoint retorna o bin id (ex: id: "abc123xyz")
+            if (resultado && resultado.id) {
+                novaEscala.id = resultado.id;
+            }
+        }
+    } catch (e) {
+        console.warn("Aviso: Não foi possível salvar na nuvem instantaneamente, usando ID local.", e);
+        novaEscala.id = 'esc_' + Date.now();
+    }
+
     novasEscalas.push(novaEscala);
     saveEscalas(novasEscalas);
-    setEscalaAtualId(escalaId);
+    setEscalaAtualId(novaEscala.id);
 
     setTimeout(() => {
-        window.location.href = 'escala.html';
+        window.location.href = `escala.html?id=${novaEscala.id}`;
     }, 100);
 }
 
@@ -161,7 +186,7 @@ function renderizarListaEscalas() {
             const porcentagem = total > 0 ? ((ocupados / total) * 100).toFixed(1) : '0.0';
 
             return `
-                <div onclick="setEscalaAtualId('${e.id}'); window.location.href='escala.html'" class="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm hover:shadow-md transition cursor-pointer flex flex-col justify-between group">
+                <div onclick="setEscalaAtualId('${e.id}'); window.location.href='escala.html?id=${e.id}'" class="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm hover:shadow-md transition cursor-pointer flex flex-col justify-between group">
                     <div>
                         <span class="text-[10px] font-bold text-indigo-900 tracking-wider uppercase bg-indigo-50 px-2 py-0.5 rounded">Igreja</span>
                         <h3 class="font-bold text-indigo-950 text-base mt-2 mb-1 group-hover:text-indigo-700 transition">${e.igreja}</h3>
@@ -181,7 +206,10 @@ function renderizarListaEscalas() {
 
 // --- CONTROLE DA PÁGINA DE DETALHES (escala.html) ---
 if (window.location.pathname.includes('escala.html')) {
-    window.addEventListener('DOMContentLoaded', carregarDetalhesEscala);
+    window.addEventListener('DOMContentLoaded', async () => {
+        await processarEscalaViaUrl();
+        carregarDetalhesEscala();
+    });
 }
 
 function carregarDetalhesEscala() {
@@ -256,7 +284,7 @@ function carregarDetalhesEscala() {
     }
 }
 
-function preencherHorario(horarioId) {
+async function preencherHorario(horarioId) {
     const nome = prompt("Digite seu nome completo para confirmar o horário de oração:");
     if (!nome || nome.trim() === "") return;
 
@@ -276,6 +304,20 @@ function preencherHorario(horarioId) {
         escala.ultimoRegistro = `${dataStr} ${horaStr}`;
 
         saveEscalas(escalas);
+
+        // Atualiza também na nuvem para que outras pessoas vejam a alteração
+        if (id && id.length > 8 && !id.startsWith('esc_') && !id.startsWith('temp_')) {
+            try {
+                await fetch(`https://api.npoint.io/${id}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(escala)
+                });
+            } catch (e) {
+                console.warn("Erro ao atualizar na nuvem:", e);
+            }
+        }
+
         carregarDetalhesEscala();
     }
 }
@@ -289,64 +331,42 @@ function excluirEscala() {
     window.location.href = "index.html";
 }
 
-// --- FUNÇÃO DE COMPARTILHAR LINK INTeligente ---
-// --- FUNÇÃO DE COMPARTILHAR LINK COMPATÍVEL COM TODOS OS NAVEGADORES ---
+// --- FUNÇÃO DE COMPARTILHAR LINK CURTO ---
 function copiarLink() {
     const id = getEscalaAtualId();
-    const escalas = getEscalas();
-    const escala = escalas.find(e => e.id === id);
-
-    if (!escala) {
+    if (!id) {
         alert("Nenhuma escala selecionada para compartilhar.");
         return;
     }
 
-    // Codifica os dados da escala inteira direto no link via Hash
-    const dadosJson = encodeURIComponent(JSON.stringify(escala));
     const urlBase = window.location.href.split('#')[0].split('?')[0];
-    const linkCompleto = `${urlBase}#data=${dadosJson}`;
+    const linkCompleto = `${urlBase}?id=${id}`;
 
-    // Tenta usar a API moderna do Clipboard primeiro
     if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(linkCompleto).then(() => {
-            alert("Link da escala copiado com sucesso! Envie para os irmãos.");
-        }).catch(err => {
-            console.warn("Falha no clipboard moderno, usando método alternativo...", err);
+            alert("Link curto copiado com sucesso! Envie para os irmãos.");
+        }).catch(() => {
             copiarLinkAlternativo(linkCompleto);
         });
     } else {
-        // Fallback para navegadores antigos ou restritos
         copiarLinkAlternativo(linkCompleto);
     }
 }
 
-// Método alternativo infalível usando um input temporário
 function copiarLinkAlternativo(texto) {
     const textarea = document.createElement("textarea");
     textarea.value = texto;
-
-    // Torna o textarea invisível e o adiciona ao corpo da página
     textarea.style.position = "fixed";
-    textarea.style.top = "0";
-    textarea.style.left = "0";
     textarea.style.opacity = "0";
     document.body.appendChild(textarea);
-
     textarea.focus();
     textarea.select();
-
     try {
-        const sucesso = document.execCommand('copy');
-        if (sucesso) {
-            alert("Link da escala copiado com sucesso! Envie para os irmãos.");
-        } else {
-            alert("Não foi possível copiar automaticamente. Copie manualmente da barra de endereços.");
-        }
+        document.execCommand('copy');
+        alert("Link curto copiado com sucesso! Envie para os irmãos.");
     } catch (err) {
-        console.error("Erro ao copiar link alternativo: ", err);
         alert("Erro ao tentar copiar o link.");
     }
-
     document.body.removeChild(textarea);
 }
 
