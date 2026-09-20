@@ -429,7 +429,7 @@ function esconderFormulario() {
 }
 
 // --- FUNÇÃO DE GERAÇÃO DE PDF ---
-function baixarPDF() {
+async function baixarPDF() {
     if (!escalaAtual || escalaAtual.criadorId !== currentUserId) {
         alert("Somente quem criou a escala pode baixar o PDF.");
         return;
@@ -437,18 +437,33 @@ function baixarPDF() {
 
     const escala = escalaAtual;
     const totalHorarios = horariosAtual.length;
-    const metade = Math.ceil(totalHorarios / 2);
-    const col1 = horariosAtual.slice(0, metade);
-    const col2 = horariosAtual.slice(metade);
 
-    const fontSize = '8px';
-    const paddingVal = '3px 5px';
-    const headerPadding = '4px 5px';
+    // Menos linhas por coluna = fonte maior possível. A altura final da imagem é sempre
+    // encaixada numa página só (ver mais abaixo), então aqui só definimos quantas colunas
+    // deixam a tabela com uma boa proporção — não precisa mais calcular isso com medo de
+    // estourar página, o encaixe cuida disso automaticamente.
+    const maxLinhasPorColuna = 36;
+    const numColunas = Math.max(2, Math.ceil(totalHorarios / maxLinhasPorColuna));
+    const linhasPorColuna = Math.ceil(totalHorarios / numColunas);
+    const colunas = [];
+    for (let i = 0; i < numColunas; i++) {
+        colunas.push(horariosAtual.slice(i * linhasPorColuna, (i + 1) * linhasPorColuna));
+    }
+    const larguraColuna = (100 / numColunas - 1).toFixed(2);
+
+    const linhasBase = 48;
+    const escalaTamanho = linhasBase / linhasPorColuna;
+
+    const fontSize = `${Math.round(8 * escalaTamanho)}px`;
+    const tituloSize = `${Math.round(11 * escalaTamanho)}px`;
+    const subtituloSize = `${(8.5 * escalaTamanho).toFixed(1)}px`;
+    const paddingVal = `${Math.round(3 * escalaTamanho)}px ${Math.round(5 * escalaTamanho)}px`;
+    const headerPadding = `${Math.round(4 * escalaTamanho)}px ${Math.round(5 * escalaTamanho)}px`;
 
     const gerarLinhas = (lista) => {
         return lista.map(h => `
             <tr>
-                <td style="border: 1px solid #cbd5e1; padding: ${paddingVal}; font-size: ${fontSize}; width: 38%; color: #1e293b; background-color: #f8fafc; line-height: 1.1;">${h.horario}</td>
+                <td style="border: 1px solid #cbd5e1; padding: ${paddingVal}; font-size: ${fontSize}; width: 38%; color: #1e293b; background-color: #f8fafc; line-height: 1.1; white-space: nowrap;">${h.horario}</td>
                 <td style="border: 1px solid #cbd5e1; padding: ${paddingVal}; font-size: ${fontSize}; width: 62%; font-weight: ${h.nome ? 'bold' : 'normal'}; color: ${h.nome ? '#0f172a' : '#94a3b8'}; line-height: 1.1;">${h.nome || ''}</td>
             </tr>
         `).join('');
@@ -462,53 +477,74 @@ function baixarPDF() {
 
     elementoTemp.innerHTML = `
         <div style="margin-bottom: 8px; border-bottom: 2px solid #1e3a8a; padding-bottom: 5px; text-align: center;">
-            <h2 style="font-size: 11px; font-weight: bold; margin: 0 0 2px 0; color: #1e3a8a; text-transform: uppercase;">ESCALA DA ORAÇÃO ININTERRUPTA - ${escala.igreja}</h2>
-            <p style="font-size: 8.5px; margin: 0 0 1px 0;"><strong>Motivo:</strong> ${escala.motivo}</p>
-            <p style="font-size: 8.5px; margin: 0;"><strong>Período:</strong> ${escala.dataInicio} - ${escala.dataFim}</p>
+            <h2 style="font-size: ${tituloSize}; font-weight: bold; margin: 0 0 2px 0; color: #1e3a8a; text-transform: uppercase;">ESCALA DA ORAÇÃO ININTERRUPTA - ${escala.igreja}</h2>
+            <p style="font-size: ${subtituloSize}; margin: 0 0 1px 0;"><strong>Motivo:</strong> ${escala.motivo}</p>
+            <p style="font-size: ${subtituloSize}; margin: 0;"><strong>Período:</strong> ${escala.dataInicio} - ${escala.dataFim}</p>
         </div>
 
         <div style="display: flex; justify-content: space-between; width: 100%;">
-            <div style="width: 49.2%;">
-                <table style="width: 100%; border-collapse: collapse;">
-                    <thead>
-                        <tr style="background-color: #1e3a8a; color: #ffffff;">
-                            <th style="border: 1px solid #1e3a8a; padding: ${headerPadding}; font-size: ${fontSize}; text-align: left;">Horário</th>
-                            <th style="border: 1px solid #1e3a8a; padding: ${headerPadding}; font-size: ${fontSize}; text-align: left;">Nome</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${gerarLinhas(col1)}
-                    </tbody>
-                </table>
-            </div>
-            <div style="width: 49.2%;">
-                <table style="width: 100%; border-collapse: collapse;">
-                    <thead>
-                        <tr style="background-color: #1e3a8a; color: #ffffff;">
-                            <th style="border: 1px solid #1e3a8a; padding: ${headerPadding}; font-size: ${fontSize}; text-align: left;">Horário</th>
-                            <th style="border: 1px solid #1e3a8a; padding: ${headerPadding}; font-size: ${fontSize}; text-align: left;">Horário/Nome</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${gerarLinhas(col2)}
-                    </tbody>
-                </table>
-            </div>
+            ${colunas.map(coluna => `
+                <div style="width: ${larguraColuna}%;">
+                    <table style="width: 100%; border-collapse: collapse;">
+                        <thead>
+                            <tr style="background-color: #1e3a8a; color: #ffffff;">
+                                <th style="border: 1px solid #1e3a8a; padding: ${headerPadding}; font-size: ${fontSize}; text-align: left;">Horário</th>
+                                <th style="border: 1px solid #1e3a8a; padding: ${headerPadding}; font-size: ${fontSize}; text-align: left;">Nome</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${gerarLinhas(coluna)}
+                        </tbody>
+                    </table>
+                </div>
+            `).join('')}
         </div>
     `;
 
-    const options = {
-        margin:       [6, 6, 6, 6],
-        filename:     `escala-${escala.igreja.toLowerCase().replace(/\s+/g, '-')}.pdf`,
-        image:        { type: 'jpeg', quality: 0.98 },
-        html2canvas:  { scale: 2, useCORS: true, logging: false },
-        jsPDF:        { unit: 'mm', format: 'a4', orientation: 'portrait' }
-    };
+    if (typeof html2canvas === 'undefined' || !window.jspdf) {
+        alert('As bibliotecas de geração de PDF não foram carregadas.');
+        return;
+    }
 
-    if (typeof html2pdf !== 'undefined') {
-        html2pdf().from(elementoTemp).set(options).save();
-    } else {
-        alert('A biblioteca html2pdf não foi carregada.');
+    // Renderiza fora da tela (não pode ter display:none, senão o html2canvas gera um canvas vazio)
+    elementoTemp.style.position = 'fixed';
+    elementoTemp.style.left = '-9999px';
+    elementoTemp.style.top = '0';
+    document.body.appendChild(elementoTemp);
+
+    try {
+        const canvas = await html2canvas(elementoTemp, { scale: 2, useCORS: true, logging: false });
+        const imagemDados = canvas.toDataURL('image/jpeg', 0.98);
+
+        const { jsPDF } = window.jspdf;
+        const pdf = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
+
+        const margem = 6;
+        const larguraDisponivel = pdf.internal.pageSize.getWidth() - margem * 2;
+        const alturaDisponivel = pdf.internal.pageSize.getHeight() - margem * 2;
+
+        let larguraFinal = larguraDisponivel;
+        let alturaFinal = (canvas.height / canvas.width) * larguraFinal;
+
+        // Se a altura calculada pela largura não couber na página, encolhe os dois lados
+        // proporcionalmente até caber — isso garante uma única página sempre, em vez de
+        // deixar o conteúdo passar para uma segunda folha.
+        if (alturaFinal > alturaDisponivel) {
+            const fatorEncolhimento = alturaDisponivel / alturaFinal;
+            alturaFinal = alturaDisponivel;
+            larguraFinal = larguraFinal * fatorEncolhimento;
+        }
+
+        const posX = margem + (larguraDisponivel - larguraFinal) / 2;
+        const posY = margem;
+
+        pdf.addImage(imagemDados, 'JPEG', posX, posY, larguraFinal, alturaFinal);
+        pdf.save(`escala-${escala.igreja.toLowerCase().replace(/\s+/g, '-')}.pdf`);
+    } catch (e) {
+        console.error('Erro ao gerar PDF', e);
+        alert('Não foi possível gerar o PDF.');
+    } finally {
+        document.body.removeChild(elementoTemp);
     }
 }
 
