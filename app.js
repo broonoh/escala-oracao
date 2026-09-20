@@ -26,23 +26,22 @@ function getEscalaAtualId() {
     const hashId = window.location.hash.substring(1); // Remove o '#'
 
     if (hashId) {
-        // Salva no localStorage do visitante
         localStorage.setItem('escala_atual_id', hashId);
         return hashId;
     }
 
-    // 2. Se não estiver no hash, tenta pegar o parâmetro antigo da URL (caso ainda tenha algum link antigo rodando)
+    // 2. Tenta pegar do parâmetro antigo (?id=...) caso algum link antigo seja acessado
     const params = new URLSearchParams(window.location.search);
     const idUrl = params.get('id');
 
     if (idUrl) {
         localStorage.setItem('escala_atual_id', idUrl);
-        // Limpa o parâmetro antigo e substitui por hash limpo na URL
+        // Transforma o parâmetro antigo em hash limpo na barra de endereços
         window.history.replaceState({}, document.title, window.location.pathname + '#' + idUrl);
         return idUrl;
     }
 
-    // 3. Por fim, pega do localStorage do próprio navegador
+    // 3. Se não houver nada na URL, pega do localStorage do navegador
     return localStorage.getItem('escala_atual_id');
 }
 
