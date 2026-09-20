@@ -4,13 +4,12 @@ if (!localStorage.getItem('user_uuid')) {
 }
 const currentUserId = localStorage.getItem('user_uuid');
 
-// --- FUNÇÕES DE PERSISTÊNCIA (LOCALSTORAGE) ---
+// --- FUNÇÕES DE PERSISTÊNCIA (LOCALSTORAGE + HASH) ---
 function getEscalas() {
     try {
         const dados = localStorage.getItem('escalas_oracao');
         if (!dados) return [];
         const parsed = JSON.parse(dados);
-        // Garante que o retorno seja sempre um array válido
         return Array.isArray(parsed) ? parsed : [parsed];
     } catch (e) {
         return [];
@@ -21,27 +20,55 @@ function saveEscalas(escalas) {
     localStorage.setItem('escalas_oracao', JSON.stringify(escalas));
 }
 
-function getEscalaAtualId() {
-    // 1. Tenta pegar o ID direto do Hash da URL (ex: escala.html#esc_123)
-    const hashId = window.location.hash.substring(1); // Remove o '#'
+// SINCRONIZAÇÃO COMPLETA POR HASH: Se o link vier com os dados da escala embutidos, salva no aparelho da visita
+function processarEscalaViaUrl() {
+    const hash = window.location.hash.substring(1);
+    if (!hash) return null;
 
-    if (hashId) {
-        localStorage.setItem('escala_atual_id', hashId);
-        return hashId;
+    try {
+        // Se o hash for um JSON compactado/codificado da escala
+        if (hash.startsWith('data=')) {
+            const jsonString = decodeURIComponent(hash.replace('data=', ''));
+            const escalaRecebida = JSON.parse(jsonString);
+
+            if (escalaRecebida && escalaRecebida.id) {
+                let escalas = getEscalas();
+                // Verifica se já existe, se não, adiciona
+                const index = escalas.findIndex(e => e.id === escalaRecebida.id);
+                if (index >= 0) {
+                    escalas[index] = escalaRecebida; // Atualiza se houver mudanças
+                } else {
+                    escalas.push(escalaRecebida); // Insere no navegador do visitante
+                }
+                saveEscalas(escalas);
+                localStorage.setItem('escala_atual_id', escalaRecebida.id);
+                return escalaRecebida.id;
+            }
+        }
+    } catch (e) {
+        console.error("Erro ao processar dados da URL", e);
     }
 
-    // 2. Tenta pegar do parâmetro antigo (?id=...) caso algum link antigo seja acessado
+    // Fallback caso seja apenas um ID simples
+    if (hash) {
+        localStorage.setItem('escala_atual_id', hash);
+        return hash;
+    }
+
+    return null;
+}
+
+function getEscalaAtualId() {
+    const idPorUrl = processarEscalaViaUrl();
+    if (idPorUrl) return idPorUrl;
+
     const params = new URLSearchParams(window.location.search);
     const idUrl = params.get('id');
-
     if (idUrl) {
         localStorage.setItem('escala_atual_id', idUrl);
-        // Transforma o parâmetro antigo em hash limpo na barra de endereços
-        window.history.replaceState({}, document.title, window.location.pathname + '#' + idUrl);
         return idUrl;
     }
 
-    // 3. Se não houver nada na URL, pega do localStorage do navegador
     return localStorage.getItem('escala_atual_id');
 }
 
@@ -92,8 +119,6 @@ function criarEscala(event) {
     const intervalo = parseInt(document.getElementById('intervalo-tempo').value) || 15;
 
     const escalaId = 'esc_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4);
-
-    // Recupera a lista atual de escalas armazenadas
     const novasEscalas = getEscalas();
 
     const novaEscala = {
@@ -108,7 +133,6 @@ function criarEscala(event) {
         horarios: gerarHorarios(intervalo)
     };
 
-    // Adiciona a nova escala mantendo as antigas que já estavam salvas
     novasEscalas.push(novaEscala);
     saveEscalas(novasEscalas);
     setEscalaAtualId(escalaId);
@@ -263,6 +287,29 @@ function excluirEscala() {
     escalas = escalas.filter(e => e.id !== id);
     saveEscalas(escalas);
     window.location.href = "index.html";
+}
+
+// --- FUNÇÃO DE COMPARTILHAR LINK INTeligente ---
+function copiarLink() {
+    const id = getEscalaAtualId();
+    const escalas = getEscalas();
+    const escala = escalas.find(e => e.id === id);
+
+    if (!escala) {
+        alert("Nenhuma escala selecionada para compartilhar.");
+        return;
+    }
+
+    // Codifica os dados da escala inteira direto no link via Hash
+    const dadosJson = encodeURIComponent(JSON.stringify(escala));
+    const urlBase = window.location.href.split('#')[0].split('?')[0];
+    const linkCompleto = `${urlBase}#data=${dadosJson}`;
+
+    navigator.clipboard.writeText(linkCompleto).then(() => {
+        alert("Link da escala copiado com sucesso! Envie para os irmãos.");
+    }).catch(err => {
+        console.error("Erro ao copiar link: ", err);
+    });
 }
 
 function mostrarFormulario() {
