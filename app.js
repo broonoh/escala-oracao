@@ -20,42 +20,6 @@ function saveEscalas(escalas) {
     localStorage.setItem('escalas_oracao', JSON.stringify(escalas));
 }
 
-// PROCESSA A URL COMPACTADA E RETORNA O ID IMEDIATAMENTE
-function processarEscalaViaUrl() {
-    const hash = window.location.hash.substring(1);
-    if (!hash) return null;
-
-    try {
-        if (hash.startsWith('data=')) {
-            const compressed = hash.replace('data=', '');
-            const jsonString = LZString.decompressFromEncodedURIComponent(compressed);
-            const escalaRecebida = JSON.parse(jsonString);
-
-            if (escalaRecebida && escalaRecebida.id) {
-                let escalas = getEscalas();
-                const index = escalas.findIndex(e => e.id === escalaRecebida.id);
-                if (index >= 0) {
-                    escalas[index] = escalaRecebida;
-                } else {
-                    escalas.push(escalaRecebida);
-                }
-                saveEscalas(escalas);
-                localStorage.setItem('escala_atual_id', escalaRecebida.id);
-                return escalaRecebida.id;
-            }
-        }
-    } catch (e) {
-        console.error("Erro ao processar dados compactados da URL", e);
-    }
-
-    if (hash) {
-        localStorage.setItem('escala_atual_id', hash);
-        return hash;
-    }
-
-    return null;
-}
-
 function getEscalaAtualId() {
     // 1. Tenta pegar primeiro da URL (Hash com dados compactados ou ID direto)
     const idPorUrl = processarEscalaViaUrl();
@@ -288,6 +252,65 @@ function excluirEscala() {
 }
 
 // --- FUNÇÃO DE COMPARTILHAR COM COMPRESSÃO INTELIGENTE ---
+// --- PROCESSA A URL COMPACTADA (OTIMIZADA) ---
+function processarEscalaViaUrl() {
+    const hash = window.location.hash.substring(1);
+    if (!hash) return null;
+
+    try {
+        if (hash.startsWith('data=')) {
+            const compressed = hash.replace('data=', '');
+            const jsonString = LZString.decompressFromEncodedURIComponent(compressed);
+            const dadosCompactados = JSON.parse(jsonString);
+
+            if (dadosCompactados && dadosCompactados.id) {
+                let escalas = getEscalas();
+
+                // Reconstrói a escala completa gerando os horários em branco e aplicando os preenchidos
+                const horariosCompletos = gerarHorarios(dadosCompactados.intervalo || 15);
+                if (dadosCompactados.preenchidos) {
+                    dadosCompactados.preenchidos.forEach(p => {
+                        const h = horariosCompletos.find(item => item.id === p.id);
+                        if (h) h.nome = p.nome;
+                    });
+                }
+
+                const escalaRecebida = {
+                    id: dadosCompactados.id,
+                    criadorId: dadosCompactados.criadorId || currentUserId,
+                    igreja: dadosCompactados.igreja,
+                    motivo: dadosCompactados.motivo,
+                    dataInicio: dadosCompactados.dataInicio,
+                    dataFim: dadosCompactados.dataFim,
+                    ultimoRegistro: dadosCompactados.ultimoRegistro || 'Nenhum registro',
+                    intervalo: dadosCompactados.intervalo || 15,
+                    horarios: horariosCompletos
+                };
+
+                const index = escalas.findIndex(e => e.id === escalaRecebida.id);
+                if (index >= 0) {
+                    escalas[index] = escalaRecebida;
+                } else {
+                    escalas.push(escalaRecebida);
+                }
+                saveEscalas(escalas);
+                localStorage.setItem('escala_atual_id', escalaRecebida.id);
+                return escalaRecebida.id;
+            }
+        }
+    } catch (e) {
+        console.error("Erro ao processar dados compactados da URL", e);
+    }
+
+    if (hash) {
+        localStorage.setItem('escala_atual_id', hash);
+        return hash;
+    }
+
+    return null;
+}
+
+// --- FUNÇÃO DE COMPARTILHAR COM LINK CURTO ---
 function copiarLink() {
     const id = getEscalaAtualId();
     const escalas = getEscalas();
@@ -298,7 +321,25 @@ function copiarLink() {
         return;
     }
 
-    const jsonString = JSON.stringify(escala);
+    // Filtra apenas os horários que possuem nomes preenchidos para economizar espaço
+    const preenchidos = escala.horarios
+        .filter(h => h.nome && h.nome.trim() !== "")
+        .map(h => ({ id: h.id, nome: h.nome }));
+
+    // Objeto enxuto contendo apenas o essencial
+    const dadosEnxutos = {
+        id: escala.id,
+        criadorId: escala.criadorId,
+        igreja: escala.igreja,
+        motivo: escala.motivo,
+        dataInicio: escala.dataInicio,
+        dataFim: escala.dataFim,
+        intervalo: escala.intervalo,
+        ultimoRegistro: escala.ultimoRegistro,
+        preenchidos: preenchidos
+    };
+
+    const jsonString = JSON.stringify(dadosEnxutos);
     const compressed = LZString.compressToEncodedURIComponent(jsonString);
 
     const urlBase = window.location.href.split('#')[0].split('?')[0];
@@ -306,7 +347,7 @@ function copiarLink() {
 
     if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(linkCompleto).then(() => {
-            alert("Link da escala compactado e copiado com sucesso!");
+            alert("Link curto da escala copiado com sucesso!");
         }).catch(() => {
             copiarLinkAlternativo(linkCompleto);
         });
