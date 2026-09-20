@@ -5,7 +5,6 @@ if (!localStorage.getItem('user_uuid')) {
 const currentUserId = localStorage.getItem('user_uuid');
 
 // --- FUNÇÕES DE PERSISTÊNCIA (LOCALSTORAGE) ---
-// --- FUNÇÕES DE PERSISTÊNCIA (LOCALSTORAGE CORRIGIDA) ---
 function getEscalas() {
     try {
         const dados = localStorage.getItem('escalas_oracao');
@@ -23,10 +22,21 @@ function saveEscalas(escalas) {
 }
 
 function getEscalaAtualId() {
-    // Tenta pegar da URL primeiro, senão pega do localStorage
+    // Tenta pegar da URL primeiro (inclusive links compartilhados)
     const params = new URLSearchParams(window.location.search);
     const idUrl = params.get('id');
-    if (idUrl) return idUrl;
+
+    if (idUrl) {
+        // Salva no localStorage do visitante para que ele possa interagir com a escala
+        localStorage.setItem('escala_atual_id', idUrl);
+
+        // Limpa o ?id= da barra de endereços para manter a URL limpa
+        window.history.replaceState({}, document.title, window.location.pathname);
+
+        return idUrl;
+    }
+
+    // Se não estiver na URL, pega do localStorage
     return localStorage.getItem('escala_atual_id');
 }
 
@@ -61,7 +71,7 @@ function gerarHorarios(intervaloMinutos = 15) {
 if (window.location.pathname.includes('index.html') || window.location.pathname.endsWith('/')) {
     window.addEventListener('DOMContentLoaded', () => {
         renderizarListaEscalas();
-        const formCriacao = document.getElementById('form-criacao-escala');
+        const formCriacao = document.getElementById('form-escala');
         if (formCriacao) {
             formCriacao.addEventListener('submit', criarEscala);
         }
@@ -99,7 +109,7 @@ function criarEscala(event) {
     setEscalaAtualId(escalaId);
 
     setTimeout(() => {
-        window.location.href = `escala.html?id=${escalaId}`;
+        window.location.href = 'escala.html';
     }, 100);
 }
 
@@ -122,7 +132,7 @@ function renderizarListaEscalas() {
             const porcentagem = total > 0 ? ((ocupados / total) * 100).toFixed(1) : '0.0';
 
             return `
-                <div onclick="setEscalaAtualId('${e.id}'); window.location.href='escala.html?id=${e.id}'" class="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm hover:shadow-md transition cursor-pointer flex flex-col justify-between group">
+                <div onclick="setEscalaAtualId('${e.id}'); window.location.href='escala.html'" class="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm hover:shadow-md transition cursor-pointer flex flex-col justify-between group">
                     <div>
                         <span class="text-[10px] font-bold text-indigo-900 tracking-wider uppercase bg-indigo-50 px-2 py-0.5 rounded">Igreja</span>
                         <h3 class="font-bold text-indigo-950 text-base mt-2 mb-1 group-hover:text-indigo-700 transition">${e.igreja}</h3>
@@ -146,15 +156,11 @@ if (window.location.pathname.includes('escala.html')) {
 }
 
 function carregarDetalhesEscala() {
-    // Se ainda houver ?id= na URL por causa de algum link antigo, limpa na hora
-    if (window.location.search) {
-        window.history.replaceState({}, document.title, window.location.pathname);
-    }
     const id = getEscalaAtualId();
     const escalas = getEscalas();
 
     if (!id) {
-        alert('ID da escala não fornecido na URL.');
+        alert('ID da escala não fornecido.');
         window.location.href = 'index.html';
         return;
     }
@@ -268,10 +274,7 @@ function esconderFormulario() {
     if (secaoBotaoNova) secaoBotaoNova.classList.remove('hidden');
 }
 
-// --- FUNÇÃO DE GERAÇÃO DE PDF OTIMIZADA PARA 1 PÁGINA (15 MINUTOS) ---
-// --- FUNÇÃO DE GERAÇÃO DE PDF TOTALMENTE RESPONSÁVEL E OTIMIZADA PARA 1 PÁGINA ---
-// --- FUNÇÃO DE GERAÇÃO DE PDF COM 2 PÁGINAS CONFORTÁVEIS PARA 15 MINUTOS ---
-// --- FUNÇÃO DE GERAÇÃO DE PDF EXATA EM 1 PÁGINA (DUAS COLUNAS LADO A LADO) ---
+// --- FUNÇÃO DE GERAÇÃO DE PDF ---
 function baixarPDF() {
     const escalaId = getEscalaAtualId();
     const escalas = getEscalas();
@@ -284,7 +287,6 @@ function baixarPDF() {
     const col1 = escala.horarios.slice(0, metade);
     const col2 = escala.horarios.slice(metade);
 
-    // Tamanho equilibrado para caber perfeitamente em 1 página A4 com total legibilidade
     const fontSize = '8px';
     const paddingVal = '3px 5px';
     const headerPadding = '4px 5px';
