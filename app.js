@@ -1,39 +1,62 @@
-// --- IDENTIFICADOR DO USUÁRIO ---
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import {
+    getFirestore,
+    doc,
+    getDoc,
+    setDoc,
+    collection,
+    onSnapshot,
+    getCountFromServer,
+    query,
+    orderBy,
+    limit,
+    getDocs,
+    serverTimestamp
+} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { firebaseConfig } from './firebase-config.js';
+
+const firebaseApp = initializeApp(firebaseConfig);
+const db = getFirestore(firebaseApp);
+
+// --- IDENTIFICADOR DO NAVEGADOR (usado só para saber, neste dispositivo, quem criou a escala) ---
 if (!localStorage.getItem('user_uuid')) {
     localStorage.setItem('user_uuid', 'user_' + Math.random().toString(36).substring(2, 9));
 }
 const currentUserId = localStorage.getItem('user_uuid');
 
-// --- FUNÇÕES DE PERSISTÊNCIA ---
-function getEscalas() {
+// --- LISTA LOCAL DE ESCALAS ---
+// Os dados de cada escala vivem no Firestore (compartilhados por todos); aqui só guardamos
+// quais IDs este navegador já criou ou abriu, para montar a tela "Minhas escalas".
+function getEscalasLocaisIds() {
     try {
-        const dados = localStorage.getItem('escalas_oracao');
-        if (!dados) return [];
-        const parsed = JSON.parse(dados);
-        return Array.isArray(parsed) ? parsed : [parsed];
+        const dados = localStorage.getItem('minhas_escalas_ids');
+        const parsed = dados ? JSON.parse(dados) : [];
+        return Array.isArray(parsed) ? parsed : [];
     } catch (e) {
         return [];
     }
 }
 
-function saveEscalas(escalas) {
-    localStorage.setItem('escalas_oracao', JSON.stringify(escalas));
+function adicionarEscalaLocal(id) {
+    const ids = getEscalasLocaisIds();
+    if (!ids.includes(id)) {
+        ids.push(id);
+        localStorage.setItem('minhas_escalas_ids', JSON.stringify(ids));
+    }
+}
+
+function removerEscalaLocal(id) {
+    const ids = getEscalasLocaisIds().filter(existente => existente !== id);
+    localStorage.setItem('minhas_escalas_ids', JSON.stringify(ids));
 }
 
 function getEscalaAtualId() {
-    // 1. Tenta pegar primeiro da URL (Hash com dados compactados ou ID direto)
-    const idPorUrl = processarEscalaViaUrl();
-    if (idPorUrl) return idPorUrl;
-
-    // 2. Tenta pegar via parâmetros de URL tradicionais (?id=...)
     const params = new URLSearchParams(window.location.search);
     const idUrl = params.get('id');
     if (idUrl) {
         localStorage.setItem('escala_atual_id', idUrl);
         return idUrl;
     }
-
-    // 3. Por fim, pega do localStorage
     return localStorage.getItem('escala_atual_id');
 }
 
@@ -64,6 +87,12 @@ function gerarHorarios(intervaloMinutos = 15) {
     return horarios;
 }
 
+function formatarDataHora(timestamp) {
+    if (!timestamp) return 'Nenhum registro';
+    const data = timestamp.toDate();
+    return `${data.toLocaleDateString('pt-BR')} ${data.toLocaleTimeString('pt-BR')}`;
+}
+
 // --- CONTROLE DA PÁGINA PRINCIPAL (index.html) ---
 if (window.location.pathname.includes('index.html') || window.location.pathname.endsWith('/')) {
     window.addEventListener('DOMContentLoaded', () => {
@@ -75,7 +104,7 @@ if (window.location.pathname.includes('index.html') || window.location.pathname.
     });
 }
 
-function criarEscala(event) {
+async function criarEscala(event) {
     event.preventDefault();
     const igreja = document.getElementById('igreja').value.trim();
     const motivo = document.getElementById('motivo').value.trim();
@@ -84,78 +113,101 @@ function criarEscala(event) {
     const intervalo = parseInt(document.getElementById('intervalo-tempo').value) || 15;
 
     const escalaId = 'esc_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4);
-    const novasEscalas = getEscalas();
 
     const novaEscala = {
-        id: escalaId,
         criadorId: currentUserId,
         igreja: igreja,
         motivo: motivo,
         dataInicio: dataInicio ? dataInicio.split('-').reverse().join('/') : '',
         dataFim: dataFim ? dataFim.split('-').reverse().join('/') : '',
-        ultimoRegistro: 'Nenhum registro',
         intervalo: intervalo,
-        horarios: gerarHorarios(intervalo)
+        criadoEm: serverTimestamp()
     };
 
-    novasEscalas.push(novaEscala);
-    saveEscalas(novasEscalas);
-    setEscalaAtualId(escalaId);
-
-    setTimeout(() => {
-        window.location.href = 'escala.html';
-    }, 100);
+    try {
+        await setDoc(doc(db, 'escalas', escalaId), novaEscala);
+        adicionarEscalaLocal(escalaId);
+        setEscalaAtualId(escalaId);
+        window.location.href = `escala.html?id=${escalaId}`;
+    } catch (e) {
+        console.error('Erro ao criar escala', e);
+        alert('Não foi possível criar a escala. Verifique a configuração do Firebase (firebase-config.js) e tente novamente.');
+    }
 }
 
-function renderizarListaEscalas() {
-    const escalas = getEscalas();
+async function renderizarListaEscalas() {
+    const ids = getEscalasLocaisIds();
     const listaDiv = document.getElementById('lista-escalas');
     const estadoVazio = document.getElementById('estado-vazio');
 
-    if (escalas.length === 0) {
+    if (ids.length === 0) {
         if (estadoVazio) estadoVazio.classList.remove('hidden');
         if (listaDiv) listaDiv.innerHTML = '';
         return;
     }
 
-    if (estadoVazio) estadoVazio.classList.add('hidden');
-    if (listaDiv) {
-        listaDiv.innerHTML = escalas.map(e => {
-            const ocupados = e.horarios.filter(h => h.nome !== "").length;
-            const total = e.horarios.length;
+    if (listaDiv) listaDiv.innerHTML = '<p class="text-sm text-slate-400 col-span-2">Carregando...</p>';
+
+    const cards = await Promise.all(ids.map(async (id) => {
+        try {
+            const escalaSnap = await getDoc(doc(db, 'escalas', id));
+            if (!escalaSnap.exists()) return null;
+            const e = escalaSnap.data();
+
+            const total = (24 * 60) / e.intervalo;
+            const horariosRef = collection(db, 'escalas', id, 'horarios');
+            const contagem = await getCountFromServer(horariosRef);
+            const ocupados = contagem.data().count;
             const porcentagem = total > 0 ? ((ocupados / total) * 100).toFixed(1) : '0.0';
 
+            const ultimoSnap = await getDocs(query(horariosRef, orderBy('timestamp', 'desc'), limit(1)));
+            const ultimoRegistro = ultimoSnap.empty ? 'Nenhum registro' : formatarDataHora(ultimoSnap.docs[0].data().timestamp);
+
             return `
-                <div onclick="setEscalaAtualId('${e.id}'); window.location.href='escala.html'" class="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm hover:shadow-md transition cursor-pointer flex flex-col justify-between group">
+                <div onclick="window.location.href='escala.html?id=${id}'" class="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm hover:shadow-md transition cursor-pointer flex flex-col justify-between group">
                     <div>
                         <span class="text-[10px] font-bold text-indigo-900 tracking-wider uppercase bg-indigo-50 px-2 py-0.5 rounded">Igreja</span>
                         <h3 class="font-bold text-indigo-950 text-base mt-2 mb-1 group-hover:text-indigo-700 transition">${e.igreja}</h3>
                         <p class="text-xs font-semibold text-slate-700 mb-1">Motivo: ${e.motivo}</p>
                         <p class="text-xs text-slate-500 mb-4">Período: ${e.dataInicio} - ${e.dataFim} (${e.intervalo} min)</p>
-                        
+
                         <div class="border-t border-slate-100 pt-3 text-xs text-slate-600 flex flex-col gap-1">
                             <div>Preenchidos: <span class="font-semibold text-slate-800">${ocupados}</span> de ${total} (<span class="font-semibold text-indigo-900">${porcentagem}%</span>)</div>
-                            <div class="text-slate-400">Último registro: ${e.ultimoRegistro}</div>
+                            <div class="text-slate-400">Último registro: ${ultimoRegistro}</div>
                         </div>
                     </div>
                 </div>
             `;
-        }).join('');
+        } catch (e) {
+            console.error('Erro ao carregar escala', id, e);
+            return null;
+        }
+    }));
+
+    const validCards = cards.filter(Boolean);
+    if (listaDiv) {
+        if (validCards.length === 0) {
+            if (estadoVazio) estadoVazio.classList.remove('hidden');
+            listaDiv.innerHTML = '';
+        } else {
+            if (estadoVazio) estadoVazio.classList.add('hidden');
+            listaDiv.innerHTML = validCards.join('');
+        }
     }
 }
 
 // --- CONTROLE DA PÁGINA DE DETALHES (escala.html) ---
+let escalaAtual = null;
+let horariosAtual = [];
+
 if (window.location.pathname.includes('escala.html')) {
     window.addEventListener('DOMContentLoaded', () => {
-        // Garante processamento imediato do hash da URL antes de renderizar
-        processarEscalaViaUrl();
         carregarDetalhesEscala();
     });
 }
 
-function carregarDetalhesEscala() {
+async function carregarDetalhesEscala() {
     const id = getEscalaAtualId();
-    const escalas = getEscalas();
 
     if (!id) {
         alert('ID da escala não fornecido.');
@@ -163,33 +215,26 @@ function carregarDetalhesEscala() {
         return;
     }
 
-    const escala = escalas.find(e => e.id === id);
+    let escalaSnap;
+    try {
+        escalaSnap = await getDoc(doc(db, 'escalas', id));
+    } catch (e) {
+        console.error('Erro ao carregar escala', e);
+        alert('Não foi possível carregar a escala. Verifique a configuração do Firebase (firebase-config.js).');
+        return;
+    }
 
-    if (!escala) {
+    if (!escalaSnap.exists()) {
         alert('Escala não encontrada!');
         window.location.href = 'index.html';
         return;
     }
 
-    const ocupados = escala.horarios.filter(h => h.nome !== "").length;
-    const total = escala.horarios.length;
-    const porcentagem = ((ocupados / total) * 100).toFixed(1);
+    escalaAtual = { id, ...escalaSnap.data() };
+    adicionarEscalaLocal(id);
+    setEscalaAtualId(id);
 
-    const detalheCard = document.getElementById('detalhe-card');
-    if (detalheCard) {
-        detalheCard.innerHTML = `
-            <span class="text-[10px] font-bold text-indigo-900 tracking-wider uppercase bg-indigo-50 px-2 py-0.5 rounded">Igreja</span>
-            <h2 class="font-bold text-indigo-950 text-xl mt-2 mb-1">${escala.igreja}</h2>
-            <p class="text-sm font-semibold text-slate-700 mb-1"><span class="text-slate-400 font-normal">Motivo:</span> ${escala.motivo}</p>
-            <p class="text-xs text-slate-500 mb-4"><span class="text-slate-400">Período:</span> ${escala.dataInicio} - ${escala.dataFim} (${escala.intervalo} em ${escala.intervalo} min)</p>
-            <div class="text-xs font-medium text-slate-700 flex flex-col gap-1.5 border-t pt-3 border-slate-100">
-                <div><i class="fa-solid fa-list-check text-indigo-900 mr-2"></i>Horários preenchidos: <span class="font-semibold text-slate-900">${ocupados}</span> de ${total} (<span class="text-indigo-900 font-semibold">${porcentagem}%</span> ocupado | ${total - ocupados} disponíveis)</div>
-                <div><i class="fa-regular fa-clock text-indigo-900 mr-2"></i>Último registro: <span class="text-slate-900 font-medium">${escala.ultimoRegistro}</span></div>
-            </div>
-        `;
-    }
-
-    const isCriador = escala.criadorId === currentUserId;
+    const isCriador = escalaAtual.criadorId === currentUserId;
     const btnPdfContainer = document.getElementById('btn-pdf-container');
     const btnExcluirContainer = document.getElementById('btn-excluir-container');
     if (btnPdfContainer) btnPdfContainer.classList.toggle('hidden', !isCriador);
@@ -197,12 +242,55 @@ function carregarDetalhesEscala() {
 
     const pdfTitulo = document.getElementById('pdf-titulo-topo');
     const pdfSub = document.getElementById('pdf-subtitulo-topo');
-    if (pdfTitulo) pdfTitulo.innerText = `Escala da Oração Ininterrupta - ${escala.igreja}`;
-    if (pdfSub) pdfSub.innerHTML = `Motivo: ${escala.motivo}<br>Período: ${escala.dataInicio} - ${escala.dataFim}`;
+    if (pdfTitulo) pdfTitulo.innerText = `Escala da Oração Ininterrupta - ${escalaAtual.igreja}`;
+    if (pdfSub) pdfSub.innerHTML = `Motivo: ${escalaAtual.motivo}<br>Período: ${escalaAtual.dataInicio} - ${escalaAtual.dataFim}`;
+
+    // Tempo real: assim que alguém confirma um horário, ele trava na hora para todo mundo que estiver com a página aberta
+    onSnapshot(collection(db, 'escalas', id, 'horarios'), (snapshot) => {
+        const horarios = gerarHorarios(escalaAtual.intervalo);
+        let ultimoTimestamp = null;
+
+        snapshot.forEach(docSnap => {
+            const dados = docSnap.data();
+            const horarioId = parseInt(docSnap.id, 10);
+            const h = horarios.find(item => item.id === horarioId);
+            if (h) h.nome = dados.nome;
+
+            if (dados.timestamp && (!ultimoTimestamp || dados.timestamp.toMillis() > ultimoTimestamp.toMillis())) {
+                ultimoTimestamp = dados.timestamp;
+            }
+        });
+
+        horariosAtual = horarios;
+        renderizarDetalhes(ultimoTimestamp);
+    }, (erro) => {
+        console.error('Erro ao escutar horários', erro);
+    });
+}
+
+function renderizarDetalhes(ultimoTimestamp) {
+    const ocupados = horariosAtual.filter(h => h.nome !== "").length;
+    const total = horariosAtual.length;
+    const porcentagem = total > 0 ? ((ocupados / total) * 100).toFixed(1) : '0.0';
+    const ultimoRegistro = formatarDataHora(ultimoTimestamp);
+
+    const detalheCard = document.getElementById('detalhe-card');
+    if (detalheCard) {
+        detalheCard.innerHTML = `
+            <span class="text-[10px] font-bold text-indigo-900 tracking-wider uppercase bg-indigo-50 px-2 py-0.5 rounded">Igreja</span>
+            <h2 class="font-bold text-indigo-950 text-xl mt-2 mb-1">${escalaAtual.igreja}</h2>
+            <p class="text-sm font-semibold text-slate-700 mb-1"><span class="text-slate-400 font-normal">Motivo:</span> ${escalaAtual.motivo}</p>
+            <p class="text-xs text-slate-500 mb-4"><span class="text-slate-400">Período:</span> ${escalaAtual.dataInicio} - ${escalaAtual.dataFim} (${escalaAtual.intervalo} em ${escalaAtual.intervalo} min)</p>
+            <div class="text-xs font-medium text-slate-700 flex flex-col gap-1.5 border-t pt-3 border-slate-100">
+                <div><i class="fa-solid fa-list-check text-indigo-900 mr-2"></i>Horários preenchidos: <span class="font-semibold text-slate-900">${ocupados}</span> de ${total} (<span class="text-indigo-900 font-semibold">${porcentagem}%</span> ocupado | ${total - ocupados} disponíveis)</div>
+                <div><i class="fa-regular fa-clock text-indigo-900 mr-2"></i>Último registro: <span class="text-slate-900 font-medium">${ultimoRegistro}</span></div>
+            </div>
+        `;
+    }
 
     const tbody = document.getElementById('tabela-horarios');
     if (tbody) {
-        tbody.innerHTML = escala.horarios.map(h => {
+        tbody.innerHTML = horariosAtual.map(h => {
             if (h.nome !== "") {
                 return `
                     <tr class="bg-white">
@@ -224,159 +312,83 @@ function carregarDetalhesEscala() {
     }
 }
 
+let horarioSelecionadoId = null;
+
 function preencherHorario(horarioId) {
-    const id = getEscalaAtualId();
-    let escalas = getEscalas();
-    let escala = escalas.find(e => e.id === id);
-
-    if (!escala) return;
-
-    const horarioObj = escala.horarios.find(h => h.id === horarioId);
+    const horarioObj = horariosAtual.find(h => h.id === horarioId);
 
     // Um horário já registrado é definitivo: não pode ser editado por ninguém
     if (!horarioObj || horarioObj.nome) return;
 
-    const nome = prompt("Digite seu nome completo para confirmar o horário de oração:");
-    if (!nome || nome.trim() === "") return;
+    horarioSelecionadoId = horarioId;
 
-    if (horarioObj) {
-        horarioObj.nome = nome.trim();
+    const modal = document.getElementById('modal-confirmar');
+    const periodo = document.getElementById('modal-horario-periodo');
+    const input = document.getElementById('modal-input-nome');
+    if (periodo) periodo.innerText = `Horário selecionado: ${horarioObj.horario}`;
+    if (input) input.value = '';
+    if (modal) modal.classList.remove('hidden');
+    if (input) input.focus();
+}
 
-        const agora = new Date();
-        const dataStr = agora.toLocaleDateString('pt-BR');
-        const horaStr = agora.toLocaleTimeString('pt-BR');
-        escala.ultimoRegistro = `${dataStr} ${horaStr}`;
+function fecharModalConfirmar() {
+    horarioSelecionadoId = null;
+    const modal = document.getElementById('modal-confirmar');
+    if (modal) modal.classList.add('hidden');
+}
 
-        saveEscalas(escalas);
-        carregarDetalhesEscala();
+async function confirmarNomeModal() {
+    if (horarioSelecionadoId === null) return;
+
+    const input = document.getElementById('modal-input-nome');
+    const nomeDigitado = input ? input.value : '';
+    const nome = nomeDigitado.trim().replace(/[<>]/g, '');
+
+    if (nome.length < 3 || nome.length > 60) {
+        alert('O nome deve ter entre 3 e 60 caracteres.');
+        return;
+    }
+
+    const horarioId = horarioSelecionadoId;
+
+    try {
+        // Se outra pessoa confirmar este mesmo horário um instante antes, o Firestore
+        // rejeita esta escrita (regras só permitem criar, nunca sobrescrever um horário já preenchido)
+        await setDoc(doc(db, 'escalas', escalaAtual.id, 'horarios', String(horarioId)), {
+            nome: nome,
+            timestamp: serverTimestamp()
+        });
+        fecharModalConfirmar();
+    } catch (e) {
+        console.error('Erro ao preencher horário', e);
+        fecharModalConfirmar();
+        alert('Alguém acabou de preencher esse horário! Escolha outro.');
     }
 }
 
 function excluirEscala() {
-    const id = getEscalaAtualId();
-    let escalas = getEscalas();
-    const escala = escalas.find(e => e.id === id);
-
-    if (!escala || escala.criadorId !== currentUserId) {
-        alert("Somente quem criou a escala pode excluí-la.");
+    if (!escalaAtual || escalaAtual.criadorId !== currentUserId) {
+        alert("Somente quem criou a escala pode removê-la.");
         return;
     }
-
-    if (!confirm("Tem certeza que deseja excluir esta escala permanentemente?")) return;
-    escalas = escalas.filter(e => e.id !== id);
-    saveEscalas(escalas);
+    if (!confirm("Remover esta escala da sua lista? Ela continua acessível a quem já tem o link.")) return;
+    removerEscalaLocal(escalaAtual.id);
     window.location.href = "index.html";
 }
 
-// --- FUNÇÃO DE COMPARTILHAR COM COMPRESSÃO INTELIGENTE ---
-// --- PROCESSA A URL COMPACTADA (OTIMIZADA) ---
-function processarEscalaViaUrl() {
-    const hash = window.location.hash.substring(1);
-    if (!hash) return null;
-
-    try {
-        if (hash.startsWith('data=')) {
-            const compressed = hash.replace('data=', '');
-            const jsonString = LZString.decompressFromEncodedURIComponent(compressed);
-            const dadosCompactados = JSON.parse(jsonString);
-
-            if (dadosCompactados && dadosCompactados.id) {
-                let escalas = getEscalas();
-
-                // Reconstrói a escala completa gerando os horários em branco e aplicando os preenchidos
-                const horariosCompletos = gerarHorarios(dadosCompactados.intervalo || 15);
-                if (dadosCompactados.preenchidos) {
-                    dadosCompactados.preenchidos.forEach(p => {
-                        const h = horariosCompletos.find(item => item.id === p.id);
-                        if (h) h.nome = p.nome;
-                    });
-                }
-
-                const escalaRecebida = {
-                    id: dadosCompactados.id,
-                    criadorId: dadosCompactados.criadorId || currentUserId,
-                    igreja: dadosCompactados.igreja,
-                    motivo: dadosCompactados.motivo,
-                    dataInicio: dadosCompactados.dataInicio,
-                    dataFim: dadosCompactados.dataFim,
-                    ultimoRegistro: dadosCompactados.ultimoRegistro || 'Nenhum registro',
-                    intervalo: dadosCompactados.intervalo || 15,
-                    horarios: horariosCompletos
-                };
-
-                const index = escalas.findIndex(e => e.id === escalaRecebida.id);
-                if (index >= 0) {
-                    // Preserva nomes já registrados localmente: uma vez preenchido, um horário
-                    // não pode ser apagado nem sobrescrito ao reabrir um link (mesmo desatualizado)
-                    const escalaLocal = escalas[index];
-                    escalaRecebida.horarios.forEach(h => {
-                        const hLocal = escalaLocal.horarios.find(item => item.id === h.id);
-                        if (hLocal && hLocal.nome) {
-                            h.nome = hLocal.nome;
-                        }
-                    });
-                    if (escalaLocal.criadorId) {
-                        escalaRecebida.criadorId = escalaLocal.criadorId;
-                    }
-                    escalas[index] = escalaRecebida;
-                } else {
-                    escalas.push(escalaRecebida);
-                }
-                saveEscalas(escalas);
-                localStorage.setItem('escala_atual_id', escalaRecebida.id);
-                return escalaRecebida.id;
-            }
-        }
-    } catch (e) {
-        console.error("Erro ao processar dados compactados da URL", e);
-    }
-
-    if (hash) {
-        localStorage.setItem('escala_atual_id', hash);
-        return hash;
-    }
-
-    return null;
-}
-
-// --- FUNÇÃO DE COMPARTILHAR COM LINK CURTO ---
+// --- FUNÇÃO DE COMPARTILHAR LINK ---
 function copiarLink() {
-    const id = getEscalaAtualId();
-    const escalas = getEscalas();
-    const escala = escalas.find(e => e.id === id);
-
-    if (!escala) {
+    if (!escalaAtual) {
         alert("Nenhuma escala selecionada para compartilhar.");
         return;
     }
 
-    // Filtra apenas os horários que possuem nomes preenchidos para economizar espaço
-    const preenchidos = escala.horarios
-        .filter(h => h.nome && h.nome.trim() !== "")
-        .map(h => ({ id: h.id, nome: h.nome }));
-
-    // Objeto enxuto contendo apenas o essencial
-    const dadosEnxutos = {
-        id: escala.id,
-        criadorId: escala.criadorId,
-        igreja: escala.igreja,
-        motivo: escala.motivo,
-        dataInicio: escala.dataInicio,
-        dataFim: escala.dataFim,
-        intervalo: escala.intervalo,
-        ultimoRegistro: escala.ultimoRegistro,
-        preenchidos: preenchidos
-    };
-
-    const jsonString = JSON.stringify(dadosEnxutos);
-    const compressed = LZString.compressToEncodedURIComponent(jsonString);
-
     const urlBase = window.location.href.split('#')[0].split('?')[0];
-    const linkCompleto = `${urlBase}#data=${compressed}`;
+    const linkCompleto = `${urlBase}?id=${escalaAtual.id}`;
 
     if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(linkCompleto).then(() => {
-            alert("Link curto da escala copiado com sucesso!");
+            alert("Link da escala copiado com sucesso!");
         }).catch(() => {
             copiarLinkAlternativo(linkCompleto);
         });
@@ -395,7 +407,7 @@ function copiarLinkAlternativo(texto) {
     textarea.select();
     try {
         document.execCommand('copy');
-        alert("Link da escala compactado e copiado com sucesso!");
+        alert("Link da escala copiado com sucesso!");
     } catch (err) {
         alert("Erro ao tentar copiar o link.");
     }
@@ -418,21 +430,16 @@ function esconderFormulario() {
 
 // --- FUNÇÃO DE GERAÇÃO DE PDF ---
 function baixarPDF() {
-    const escalaId = getEscalaAtualId();
-    const escalas = getEscalas();
-    const escala = escalas.find(e => e.id === escalaId);
-
-    if (!escala) return;
-
-    if (escala.criadorId !== currentUserId) {
+    if (!escalaAtual || escalaAtual.criadorId !== currentUserId) {
         alert("Somente quem criou a escala pode baixar o PDF.");
         return;
     }
 
-    const totalHorarios = escala.horarios.length;
+    const escala = escalaAtual;
+    const totalHorarios = horariosAtual.length;
     const metade = Math.ceil(totalHorarios / 2);
-    const col1 = escala.horarios.slice(0, metade);
-    const col2 = escala.horarios.slice(metade);
+    const col1 = horariosAtual.slice(0, metade);
+    const col2 = horariosAtual.slice(metade);
 
     const fontSize = '8px';
     const paddingVal = '3px 5px';
@@ -459,7 +466,7 @@ function baixarPDF() {
             <p style="font-size: 8.5px; margin: 0 0 1px 0;"><strong>Motivo:</strong> ${escala.motivo}</p>
             <p style="font-size: 8.5px; margin: 0;"><strong>Período:</strong> ${escala.dataInicio} - ${escala.dataFim}</p>
         </div>
-        
+
         <div style="display: flex; justify-content: space-between; width: 100%;">
             <div style="width: 49.2%;">
                 <table style="width: 100%; border-collapse: collapse;">
@@ -504,3 +511,14 @@ function baixarPDF() {
         alert('A biblioteca html2pdf não foi carregada.');
     }
 }
+
+// Funções chamadas via atributos onclick/onsubmit no HTML precisam ficar expostas no window,
+// pois módulos ES não colocam nada no escopo global automaticamente.
+window.mostrarFormulario = mostrarFormulario;
+window.esconderFormulario = esconderFormulario;
+window.copiarLink = copiarLink;
+window.baixarPDF = baixarPDF;
+window.excluirEscala = excluirEscala;
+window.preencherHorario = preencherHorario;
+window.fecharModalConfirmar = fecharModalConfirmar;
+window.confirmarNomeModal = confirmarNomeModal;

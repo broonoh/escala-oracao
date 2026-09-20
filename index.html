@@ -27,7 +27,7 @@
     <!-- Formulário de Criação -->
     <div id="secao-criacao" class="hidden mb-12 max-w-xl ml-auto bg-slate-50 p-6 rounded-2xl border border-slate-100 shadow-sm">
         <h2 class="text-indigo-950 font-bold text-base mb-4">Nova Escala de Oração</h2>
-        <form id="form-escala" onsubmit="criarEscala(event)" class="space-y-5">
+        <form id="form-escala" class="space-y-5">
             <div>
                 <label class="block text-xs font-semibold text-indigo-950 uppercase tracking-wide mb-1">Igreja</label>
                 <input type="text" id="igreja" required placeholder="Ex: ICM HINTERLÂNDIA" class="w-full border-b border-slate-300 focus:border-indigo-950 outline-none py-1.5 text-slate-800 bg-transparent text-sm transition">
@@ -84,6 +84,6 @@
     </div>
 </main>
 
-<script src="app.js"></script>
+<script type="module" src="app.js"></script>
 </body>
 </html>
