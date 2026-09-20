@@ -20,7 +20,7 @@ function saveEscalas(escalas) {
     localStorage.setItem('escalas_oracao', JSON.stringify(escalas));
 }
 
-// PROCESSA A URL COMPACTADA
+// PROCESSA A URL COMPACTADA E RETORNA O ID IMEDIATAMENTE
 function processarEscalaViaUrl() {
     const hash = window.location.hash.substring(1);
     if (!hash) return null;
@@ -28,7 +28,6 @@ function processarEscalaViaUrl() {
     try {
         if (hash.startsWith('data=')) {
             const compressed = hash.replace('data=', '');
-            // Descompacta usando LZString
             const jsonString = LZString.decompressFromEncodedURIComponent(compressed);
             const escalaRecebida = JSON.parse(jsonString);
 
@@ -58,9 +57,11 @@ function processarEscalaViaUrl() {
 }
 
 function getEscalaAtualId() {
+    // 1. Tenta pegar primeiro da URL (Hash com dados compactados ou ID direto)
     const idPorUrl = processarEscalaViaUrl();
     if (idPorUrl) return idPorUrl;
 
+    // 2. Tenta pegar via parâmetros de URL tradicionais (?id=...)
     const params = new URLSearchParams(window.location.search);
     const idUrl = params.get('id');
     if (idUrl) {
@@ -68,6 +69,7 @@ function getEscalaAtualId() {
         return idUrl;
     }
 
+    // 3. Por fim, pega do localStorage
     return localStorage.getItem('escala_atual_id');
 }
 
@@ -180,7 +182,11 @@ function renderizarListaEscalas() {
 
 // --- CONTROLE DA PÁGINA DE DETALHES (escala.html) ---
 if (window.location.pathname.includes('escala.html')) {
-    window.addEventListener('DOMContentLoaded', carregarDetalhesEscala);
+    window.addEventListener('DOMContentLoaded', () => {
+        // Garante processamento imediato do hash da URL antes de renderizar
+        processarEscalaViaUrl();
+        carregarDetalhesEscala();
+    });
 }
 
 function carregarDetalhesEscala() {
@@ -292,7 +298,6 @@ function copiarLink() {
         return;
     }
 
-    // Compacta o JSON inteiro usando LZString para diminuir drasticamente o tamanho do link
     const jsonString = JSON.stringify(escala);
     const compressed = LZString.compressToEncodedURIComponent(jsonString);
 
@@ -399,7 +404,7 @@ function baixarPDF() {
                     <thead>
                         <tr style="background-color: #1e3a8a; color: #ffffff;">
                             <th style="border: 1px solid #1e3a8a; padding: ${headerPadding}; font-size: ${fontSize}; text-align: left;">Horário</th>
-                            <th style="border: 1px solid #1e3a8a; padding: ${headerPadding}; font-size: ${fontSize}; text-align: left;">Nome</th>
+                            <th style="border: 1px solid #1e3a8a; padding: ${headerPadding}; font-size: ${fontSize}; text-align: left;">Horário/Nome</th>
                         </tr>
                     </thead>
                     <tbody>
