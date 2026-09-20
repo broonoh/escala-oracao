@@ -1,10 +1,40 @@
-// Identificador único do navegador para gerenciar permissões
+// --- IDENTIFICADOR DO USUÁRIO ---
 if (!localStorage.getItem('user_uuid')) {
     localStorage.setItem('user_uuid', 'user_' + Math.random().toString(36).substring(2, 9));
 }
 const currentUserId = localStorage.getItem('user_uuid');
 
-// Gerador de horários flexível
+// --- FUNÇÕES DE PERSISTÊNCIA (LOCALSTORAGE) ---
+// --- FUNÇÕES DE PERSISTÊNCIA (LOCALSTORAGE CORRIGIDA) ---
+function getEscalas() {
+    try {
+        const dados = localStorage.getItem('escalas_oracao');
+        if (!dados) return [];
+        const parsed = JSON.parse(dados);
+        // Garante que o retorno seja sempre um array válido
+        return Array.isArray(parsed) ? parsed : [parsed];
+    } catch (e) {
+        return [];
+    }
+}
+
+function saveEscalas(escalas) {
+    localStorage.setItem('escalas_oracao', JSON.stringify(escalas));
+}
+
+function getEscalaAtualId() {
+    // Tenta pegar da URL primeiro, senão pega do localStorage
+    const params = new URLSearchParams(window.location.search);
+    const idUrl = params.get('id');
+    if (idUrl) return idUrl;
+    return localStorage.getItem('escala_atual_id');
+}
+
+function setEscalaAtualId(id) {
+    localStorage.setItem('escala_atual_id', id);
+}
+
+// --- GERADOR DE HORÁRIOS ---
 function gerarHorarios(intervaloMinutos = 15) {
     const horarios = [];
     const totalBlocos = (24 * 60) / intervaloMinutos;
@@ -27,17 +57,15 @@ function gerarHorarios(intervaloMinutos = 15) {
     return horarios;
 }
 
-function getEscalas() {
-    return JSON.parse(localStorage.getItem('escalas_oracao')) || [];
-}
-
-function saveEscalas(escalas) {
-    localStorage.setItem('escalas_oracao', JSON.stringify(escalas));
-}
-
-// Controladores da Página Principal (index.html)
+// --- CONTROLE DA PÁGINA PRINCIPAL (index.html) ---
 if (window.location.pathname.includes('index.html') || window.location.pathname.endsWith('/')) {
-    window.addEventListener('DOMContentLoaded', renderizarListaEscalas);
+    window.addEventListener('DOMContentLoaded', () => {
+        renderizarListaEscalas();
+        const formCriacao = document.getElementById('form-criacao-escala');
+        if (formCriacao) {
+            formCriacao.addEventListener('submit', criarEscala);
+        }
+    });
 }
 
 function criarEscala(event) {
@@ -48,10 +76,11 @@ function criarEscala(event) {
     const dataFim = document.getElementById('data-fim').value;
     const intervalo = parseInt(document.getElementById('intervalo-tempo').value) || 15;
 
-    // Gerar ID seguro
     const escalaId = 'esc_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4);
 
+    // Recupera a lista atual de escalas armazenadas
     const novasEscalas = getEscalas();
+
     const novaEscala = {
         id: escalaId,
         criadorId: currentUserId,
@@ -64,10 +93,11 @@ function criarEscala(event) {
         horarios: gerarHorarios(intervalo)
     };
 
+    // Adiciona a nova escala mantendo as antigas que já estavam salvas
     novasEscalas.push(novaEscala);
     saveEscalas(novasEscalas);
+    setEscalaAtualId(escalaId);
 
-    // Pequeno atraso para garantir escrita síncrona no localStorage antes de navegar
     setTimeout(() => {
         window.location.href = `escala.html?id=${escalaId}`;
     }, 100);
@@ -89,10 +119,10 @@ function renderizarListaEscalas() {
         listaDiv.innerHTML = escalas.map(e => {
             const ocupados = e.horarios.filter(h => h.nome !== "").length;
             const total = e.horarios.length;
-            const porcentagem = ((ocupados / total) * 100).toFixed(1);
+            const porcentagem = total > 0 ? ((ocupados / total) * 100).toFixed(1) : '0.0';
 
             return `
-                <div onclick="window.location.href='escala.html?id=${e.id}'" class="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm hover:shadow-md transition cursor-pointer flex flex-col justify-between group">
+                <div onclick="setEscalaAtualId('${e.id}'); window.location.href='escala.html?id=${e.id}'" class="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm hover:shadow-md transition cursor-pointer flex flex-col justify-between group">
                     <div>
                         <span class="text-[10px] font-bold text-indigo-900 tracking-wider uppercase bg-indigo-50 px-2 py-0.5 rounded">Igreja</span>
                         <h3 class="font-bold text-indigo-950 text-base mt-2 mb-1 group-hover:text-indigo-700 transition">${e.igreja}</h3>
@@ -110,14 +140,9 @@ function renderizarListaEscalas() {
     }
 }
 
-// Controladores da Página de Detalhes (escala.html)
+// --- CONTROLE DA PÁGINA DE DETALHES (escala.html) ---
 if (window.location.pathname.includes('escala.html')) {
     window.addEventListener('DOMContentLoaded', carregarDetalhesEscala);
-}
-
-function getEscalaAtualId() {
-    const params = new URLSearchParams(window.location.search);
-    return params.get('id');
 }
 
 function carregarDetalhesEscala() {
@@ -133,7 +158,6 @@ function carregarDetalhesEscala() {
     const escala = escalas.find(e => e.id === id);
 
     if (!escala) {
-        console.warn("Escala procurada:", id, "Escalas disponíveis:", escalas);
         alert('Escala não encontrada!');
         window.location.href = 'index.html';
         return;
@@ -201,6 +225,8 @@ function preencherHorario(horarioId) {
     let escalas = getEscalas();
     let escala = escalas.find(e => e.id === id);
 
+    if (!escala) return;
+
     const horarioObj = escala.horarios.find(h => h.id === horarioId);
     if (horarioObj) {
         horarioObj.nome = nome.trim();
@@ -238,6 +264,10 @@ function esconderFormulario() {
     if (secaoBotaoNova) secaoBotaoNova.classList.remove('hidden');
 }
 
+// --- FUNÇÃO DE GERAÇÃO DE PDF OTIMIZADA PARA 1 PÁGINA (15 MINUTOS) ---
+// --- FUNÇÃO DE GERAÇÃO DE PDF TOTALMENTE RESPONSÁVEL E OTIMIZADA PARA 1 PÁGINA ---
+// --- FUNÇÃO DE GERAÇÃO DE PDF COM 2 PÁGINAS CONFORTÁVEIS PARA 15 MINUTOS ---
+// --- FUNÇÃO DE GERAÇÃO DE PDF EXATA EM 1 PÁGINA (DUAS COLUNAS LADO A LADO) ---
 function baixarPDF() {
     const escalaId = getEscalaAtualId();
     const escalas = getEscalas();
@@ -245,41 +275,45 @@ function baixarPDF() {
 
     if (!escala) return;
 
-    // Divide os horários exatamente ao meio para preencher as duas colunas
-    const metade = Math.ceil(escala.horarios.length / 2);
+    const totalHorarios = escala.horarios.length;
+    const metade = Math.ceil(totalHorarios / 2);
     const col1 = escala.horarios.slice(0, metade);
     const col2 = escala.horarios.slice(metade);
+
+    // Tamanho equilibrado para caber perfeitamente em 1 página A4 com total legibilidade
+    const fontSize = '8px';
+    const paddingVal = '3px 5px';
+    const headerPadding = '4px 5px';
 
     const gerarLinhas = (lista) => {
         return lista.map(h => `
             <tr>
-                <td style="border: 1px solid #b0c4de; padding: 5px 8px; font-size: 9px; width: 38%; color: #1e293b; background-color: #f8fafc; line-height: 1.2;">${h.horario}</td>
-                <td style="border: 1px solid #b0c4de; padding: 5px 8px; font-size: 9px; width: 62%; font-weight: ${h.nome ? 'bold' : 'normal'}; color: ${h.nome ? '#0f172a' : '#94a3b8'}; line-height: 1.2;">${h.nome || ''}</td>
+                <td style="border: 1px solid #cbd5e1; padding: ${paddingVal}; font-size: ${fontSize}; width: 38%; color: #1e293b; background-color: #f8fafc; line-height: 1.1;">${h.horario}</td>
+                <td style="border: 1px solid #cbd5e1; padding: ${paddingVal}; font-size: ${fontSize}; width: 62%; font-weight: ${h.nome ? 'bold' : 'normal'}; color: ${h.nome ? '#0f172a' : '#94a3b8'}; line-height: 1.1;">${h.nome || ''}</td>
             </tr>
         `).join('');
     };
 
-    // Criação do elemento com altura de linha mais confortável
     const elementoTemp = document.createElement('div');
-    elementoTemp.style.padding = '10px';
+    elementoTemp.style.width = '190mm';
     elementoTemp.style.backgroundColor = '#ffffff';
     elementoTemp.style.color = '#0f172a';
     elementoTemp.style.fontFamily = 'Arial, Helvetica, sans-serif';
 
     elementoTemp.innerHTML = `
-        <div style="margin-bottom: 10px; border-bottom: 2px solid #1e3a8a; padding-bottom: 6px; text-align: center;">
-            <h2 style="font-size: 12px; font-weight: bold; margin: 0 0 3px 0; color: #1e3a8a; text-transform: uppercase;">ESCALA DA ORAÇÃO ININTERRUPTA - ${escala.igreja}</h2>
-            <p style="font-size: 9px; margin: 0 0 2px 0;"><strong>Motivo:</strong> ${escala.motivo}</p>
-            <p style="font-size: 9px; margin: 0;"><strong>Período:</strong> ${escala.dataInicio} - ${escala.dataFim}</p>
+        <div style="margin-bottom: 8px; border-bottom: 2px solid #1e3a8a; padding-bottom: 5px; text-align: center;">
+            <h2 style="font-size: 11px; font-weight: bold; margin: 0 0 2px 0; color: #1e3a8a; text-transform: uppercase;">ESCALA DA ORAÇÃO ININTERRUPTA - ${escala.igreja}</h2>
+            <p style="font-size: 8.5px; margin: 0 0 1px 0;"><strong>Motivo:</strong> ${escala.motivo}</p>
+            <p style="font-size: 8.5px; margin: 0;"><strong>Período:</strong> ${escala.dataInicio} - ${escala.dataFim}</p>
         </div>
         
-        <div style="display: flex; justify-content: space-between; gap: 8px; width: 100%;">
-            <div style="width: 49%;">
+        <div style="display: flex; justify-content: space-between; width: 100%;">
+            <div style="width: 49.2%;">
                 <table style="width: 100%; border-collapse: collapse;">
                     <thead>
                         <tr style="background-color: #1e3a8a; color: #ffffff;">
-                            <th style="border: 1px solid #1e3a8a; padding: 5px 8px; font-size: 9px; text-align: left;">Horário</th>
-                            <th style="border: 1px solid #1e3a8a; padding: 5px 8px; font-size: 9px; text-align: left;">Nome</th>
+                            <th style="border: 1px solid #1e3a8a; padding: ${headerPadding}; font-size: ${fontSize}; text-align: left;">Horário</th>
+                            <th style="border: 1px solid #1e3a8a; padding: ${headerPadding}; font-size: ${fontSize}; text-align: left;">Nome</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -287,12 +321,12 @@ function baixarPDF() {
                     </tbody>
                 </table>
             </div>
-            <div style="width: 49%;">
+            <div style="width: 49.2%;">
                 <table style="width: 100%; border-collapse: collapse;">
                     <thead>
                         <tr style="background-color: #1e3a8a; color: #ffffff;">
-                            <th style="border: 1px solid #1e3a8a; padding: 5px 8px; font-size: 9px; text-align: left;">Horário</th>
-                            <th style="border: 1px solid #1e3a8a; padding: 5px 8px; font-size: 9px; text-align: left;">Nome</th>
+                            <th style="border: 1px solid #1e3a8a; padding: ${headerPadding}; font-size: ${fontSize}; text-align: left;">Horário</th>
+                            <th style="border: 1px solid #1e3a8a; padding: ${headerPadding}; font-size: ${fontSize}; text-align: left;">Nome</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -304,7 +338,7 @@ function baixarPDF() {
     `;
 
     const options = {
-        margin:       [8, 8, 8, 8],
+        margin:       [6, 6, 6, 6],
         filename:     `escala-${escala.igreja.toLowerCase().replace(/\s+/g, '-')}.pdf`,
         image:        { type: 'jpeg', quality: 0.98 },
         html2canvas:  { scale: 2, useCORS: true, logging: false },
