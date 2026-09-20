@@ -22,21 +22,27 @@ function saveEscalas(escalas) {
 }
 
 function getEscalaAtualId() {
-    // Tenta pegar da URL primeiro (inclusive links compartilhados)
+    // 1. Tenta pegar o ID direto do Hash da URL (ex: escala.html#esc_123)
+    const hashId = window.location.hash.substring(1); // Remove o '#'
+
+    if (hashId) {
+        // Salva no localStorage do visitante
+        localStorage.setItem('escala_atual_id', hashId);
+        return hashId;
+    }
+
+    // 2. Se não estiver no hash, tenta pegar o parâmetro antigo da URL (caso ainda tenha algum link antigo rodando)
     const params = new URLSearchParams(window.location.search);
     const idUrl = params.get('id');
 
     if (idUrl) {
-        // Salva no localStorage do visitante para que ele possa interagir com a escala
         localStorage.setItem('escala_atual_id', idUrl);
-
-        // Limpa o ?id= da barra de endereços para manter a URL limpa
-        window.history.replaceState({}, document.title, window.location.pathname);
-
+        // Limpa o parâmetro antigo e substitui por hash limpo na URL
+        window.history.replaceState({}, document.title, window.location.pathname + '#' + idUrl);
         return idUrl;
     }
 
-    // Se não estiver na URL, pega do localStorage
+    // 3. Por fim, pega do localStorage do próprio navegador
     return localStorage.getItem('escala_atual_id');
 }
 
