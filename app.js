@@ -189,6 +189,12 @@ function carregarDetalhesEscala() {
         `;
     }
 
+    const isCriador = escala.criadorId === currentUserId;
+    const btnPdfContainer = document.getElementById('btn-pdf-container');
+    const btnExcluirContainer = document.getElementById('btn-excluir-container');
+    if (btnPdfContainer) btnPdfContainer.classList.toggle('hidden', !isCriador);
+    if (btnExcluirContainer) btnExcluirContainer.classList.toggle('hidden', !isCriador);
+
     const pdfTitulo = document.getElementById('pdf-titulo-topo');
     const pdfSub = document.getElementById('pdf-subtitulo-topo');
     if (pdfTitulo) pdfTitulo.innerText = `Escala da Oração Ininterrupta - ${escala.igreja}`;
@@ -219,9 +225,6 @@ function carregarDetalhesEscala() {
 }
 
 function preencherHorario(horarioId) {
-    const nome = prompt("Digite seu nome completo para confirmar o horário de oração:");
-    if (!nome || nome.trim() === "") return;
-
     const id = getEscalaAtualId();
     let escalas = getEscalas();
     let escala = escalas.find(e => e.id === id);
@@ -229,6 +232,13 @@ function preencherHorario(horarioId) {
     if (!escala) return;
 
     const horarioObj = escala.horarios.find(h => h.id === horarioId);
+
+    // Um horário já registrado é definitivo: não pode ser editado por ninguém
+    if (!horarioObj || horarioObj.nome) return;
+
+    const nome = prompt("Digite seu nome completo para confirmar o horário de oração:");
+    if (!nome || nome.trim() === "") return;
+
     if (horarioObj) {
         horarioObj.nome = nome.trim();
 
@@ -243,9 +253,16 @@ function preencherHorario(horarioId) {
 }
 
 function excluirEscala() {
-    if (!confirm("Tem certeza que deseja excluir esta escala permanentemente?")) return;
     const id = getEscalaAtualId();
     let escalas = getEscalas();
+    const escala = escalas.find(e => e.id === id);
+
+    if (!escala || escala.criadorId !== currentUserId) {
+        alert("Somente quem criou a escala pode excluí-la.");
+        return;
+    }
+
+    if (!confirm("Tem certeza que deseja excluir esta escala permanentemente?")) return;
     escalas = escalas.filter(e => e.id !== id);
     saveEscalas(escalas);
     window.location.href = "index.html";
@@ -289,6 +306,18 @@ function processarEscalaViaUrl() {
 
                 const index = escalas.findIndex(e => e.id === escalaRecebida.id);
                 if (index >= 0) {
+                    // Preserva nomes já registrados localmente: uma vez preenchido, um horário
+                    // não pode ser apagado nem sobrescrito ao reabrir um link (mesmo desatualizado)
+                    const escalaLocal = escalas[index];
+                    escalaRecebida.horarios.forEach(h => {
+                        const hLocal = escalaLocal.horarios.find(item => item.id === h.id);
+                        if (hLocal && hLocal.nome) {
+                            h.nome = hLocal.nome;
+                        }
+                    });
+                    if (escalaLocal.criadorId) {
+                        escalaRecebida.criadorId = escalaLocal.criadorId;
+                    }
                     escalas[index] = escalaRecebida;
                 } else {
                     escalas.push(escalaRecebida);
@@ -394,6 +423,11 @@ function baixarPDF() {
     const escala = escalas.find(e => e.id === escalaId);
 
     if (!escala) return;
+
+    if (escala.criadorId !== currentUserId) {
+        alert("Somente quem criou a escala pode baixar o PDF.");
+        return;
+    }
 
     const totalHorarios = escala.horarios.length;
     const metade = Math.ceil(totalHorarios / 2);
